@@ -470,25 +470,6 @@ void Transition::analyzeColors(RgbfColor **dest, RgbfColor **source,
 }
 
 //------------------------------------------------------------------------------
-
-void Transition::setMinute() {
-    if (G.minuteVariant != MinuteVariant::Off) {
-        uint8_t m = lastMinute % 5;
-        uint16_t minArray[4];
-        usedUhrType->getMinuteArray(minArray,
-                                    clockWork.determineWhichMinuteVariant());
-        if (G.layoutVariant[ReverseMinDirection]) {
-            std::reverse(std::begin(minArray), std::end(minArray));
-        }
-        for (uint8_t i = 0; i < 4; i++) {
-            led.setPixel(minArray[i],
-                         HsbColor{m > i ? foregroundMinute : background});
-            // TODO: fading transition for Minutes
-        }
-    }
-}
-
-//------------------------------------------------------------------------------
 // Overwrite the LEDs with internal matrix
 
 void Transition::copy2Stripe(RgbfColor **source) {
@@ -925,8 +906,10 @@ uint16_t Transition::transitionCountdown(struct tm &tm) {
         // convert second to acii
         unsigned char unsigned_s0 = static_cast<unsigned char>(seconds[0]);
         unsigned char unsigned_s1 = static_cast<unsigned char>(seconds[1]);
-        if (usedUhrType->colsWordMatrix() < (fontWidth[usedFontSize] * 2 + 1) ||
-            usedUhrType->rowsWordMatrix() < fontHeight[usedFontSize]) {
+        if (usedUhrType->colsWordMatrix() <
+                (pgm_read_byte(&(fontWidth[usedFontSize])) * 2 + 1) ||
+            usedUhrType->rowsWordMatrix() <
+                pgm_read_byte(&(fontHeight[usedFontSize]))) {
             usedFontSize = smallSizeNumbers;
             // convert char to int due to differt definition in font.h
             unsigned_s0 -= 48;
@@ -1108,16 +1091,34 @@ uint16_t Transition::transitionSnake() {
 // Loop Helper Functions
 //------------------------------------------------------------------------------
 
-void Transition::demoMode(uint8_t &_minute, uint8_t _second) {
-    static uint8_t test_second = 0;
-    static uint8_t test_minute = 45;
+void Transition::demoMode(uint8_t &_hour, uint8_t &_minute, uint8_t _second) {
+    static uint8_t test_second = _second;
+    static uint8_t test_minute = _minute;
+    static uint8_t test_hour = _hour;
     if (G.transitionDemo) {
-        if (isIdle() && ((_second % 10) == 0) && (test_second != _second)) {
-            test_minute += 5;
-            if (test_minute >= 60) {
-                test_minute = _minute % 5;
+        // increment every second
+        // by checking isIdle transitions are completely done
+        if (isIdle() && ((_second % 2) == 0) && (test_second != _second)) {
+            // select increment by clock type
+            if (usedUhrType != nullptr) {
+                if (usedUhrType->hasOnlyQuarterLayout()) {
+                    test_minute += 15;
+                } else if (usedUhrType->has60MinuteLayout()) {
+                    test_minute += 1;
+                } else {
+                    test_minute += 5;
+                }
             }
+            // add one hour every 60 minutes
+            if (test_minute >= 60) {
+                test_minute %= 60;
+                test_hour = (test_hour + 1) % 24;
+            }
+            // log demo time
+            Serial.printf("Demo time: %02d:%02d\n", test_hour, test_minute);
         }
+        // set to time variables
+        _hour = test_hour;
         _minute = test_minute;
         test_second = _second;
     }
@@ -1282,9 +1283,13 @@ void Transition::loop(struct tm &tm) {
             transitionColorChange();
             copy2Stripe(work);
             if (!specialEvent) {
-                setMinute();
+
+                if (G.minuteVariant != MinuteVariant::Off) {
+                    led.setbyMinuteArray(Foreground);
+                }
+
                 if (G.secondVariant != SecondVariant::Off) {
-                    led.setbySecondArray();
+                    led.setbySecondArray(Frame);
                     // Workaround: setbySecondArray not in 'work'
                 }
             }

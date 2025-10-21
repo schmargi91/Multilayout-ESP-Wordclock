@@ -15,6 +15,10 @@
 #include <WiFi.h>
 #include <esp_sntp.h>
 #endif
+
+#include "config.h"
+
+#include "Wortuhr.h"
 #include <NeoPixelBus.h>
 #include <RTClib.h>
 #include <WiFiClient.h>
@@ -22,11 +26,10 @@
 #include <Wire.h>
 
 #include "Uhr.h"
-
-#include "EEPROMAnything.h"
-#include "config.h"
 #include "uhrtype.gen.h"
 #include "webPageAdapter.h"
+
+#include "EEPROMAnything.h"
 
 iUhrType *usedUhrType = nullptr;
 
@@ -138,6 +141,15 @@ void incrementPowerCycleCount() {
 }
 
 //------------------------------------------------------------------------------
+
+void sendMQTTUpdate() {
+    // send status update via MQTT
+    if ((G.mqtt.state) && (WiFi.status() == WL_CONNECTED)) {
+        mqtt.sendState();
+    }
+}
+
+//------------------------------------------------------------------------------
 // Start setup()
 //------------------------------------------------------------------------------
 
@@ -166,7 +178,14 @@ void setup() {
     incrementPowerCycleCount();
     Serial.print("Power cycle count: ");
     Serial.println(powerCycleCount);
-    if (powerCycleCount == 5) {
+    if (powerCycleCount == 3) {
+        Serial.println("Enable captive portal");
+#if CP_PROTECTED
+        wifiManager.startConfigPortal(CP_SSID, CP_PASSWORD);
+#else
+        wifiManager.startConfigPortal(CP_SSID);
+#endif
+    } else if (powerCycleCount == 6) {
         G.sernr++;
         Serial.println("Reset to initial values");
     }
@@ -180,14 +199,14 @@ void setup() {
         EEPROM.commit();
 
         G.sernr = SERNR;
-        G.prog = 1;
+        G.prog = COMMAND_MODE_WORD_CLOCK;
         G.param1 = 0;
         G.progInit = true;
         G.conf = COMMAND_IDLE;
         for (uint8_t i = 0; i < 3; i++) {
             G.color[i] = {0, 0, 0};
         }
-        G.color[Foreground] = HsbColor(120 / 360.f, 1.f, 0.5f);
+        G.color[Foreground] = HsbColor(DEFAULT_HUE / 360.f, 1.f, 0.5f);
         G.effectBri = 2;
         G.effectSpeed = 10;
         G.client_nr = 0;
@@ -209,17 +228,20 @@ void setup() {
         strcpy(G.hostname, "ESPWordclock");
         strcpy(G.scrollingText, "HELLO WORLD ");
 
-        G.h6 = 100;
-        G.h8 = 100;
-        G.h12 = 100;
-        G.h16 = 100;
-        G.h18 = 100;
-        G.h20 = 100;
-        G.h22 = 100;
-        G.h24 = 100;
+        G.h6 = DEFAULT_BRIGHTNESS;
+        G.h8 = DEFAULT_BRIGHTNESS;
+        G.h12 = DEFAULT_BRIGHTNESS;
+        G.h16 = DEFAULT_BRIGHTNESS;
+        G.h18 = DEFAULT_BRIGHTNESS;
+        G.h20 = DEFAULT_BRIGHTNESS;
+        G.h22 = DEFAULT_BRIGHTNESS;
+        G.h24 = DEFAULT_BRIGHTNESS;
         G.layoutVariant[ReverseMinDirection] = REVERSE_MINUTE_DIR;
         G.layoutVariant[MirrorVertical] = MIRROR_FRONT_VERTICAL;
         G.layoutVariant[MirrorHorizontal] = MIRROR_FRONT_HORIZONTAL;
+        G.layoutVariant[FlipHorzVert] = FLIP_HORIZONTAL_VERTICAL;
+        G.layoutVariant[ExtraLedPerRow] = EXTRA_LED_PER_ROW;
+        G.layoutVariant[MeanderRows] = MEANDER_ROWS;
         for (uint8_t i = 0;
              i < sizeof(G.languageVariant) / sizeof(G.languageVariant[0]);
              i++) {
@@ -244,8 +266,9 @@ void setup() {
         G.bootShowIP = BOOT_SHOWIP;
 
         G.autoBrightEnabled = 0;
-        G.autoBrightOffset = 100;
-        G.autoBrightSlope = 10;
+        G.autoBrightMin = 10;
+        G.autoBrightMax = 80;
+        G.autoBrightPeak = 750;
         G.transitionType = 0; // Transition::NO_TRANSITION;
         G.transitionDuration = 2;
         G.transitionSpeed = 30;
@@ -336,8 +359,10 @@ void setup() {
         led.setIcon(WLAN100);
     }
     network.setup(G.hostname);
+#if WIFI_VERBOSE
     int strength = network.getQuality();
     Serial.printf("Signal strength: %i\n", strength);
+#endif
     wifiStart();
     configTime(0, 0, G.timeserver);
     setenv("TZ", TZ_Europe_Berlin, true);
@@ -408,6 +433,30 @@ void setup() {
     Serial.print(" ");
     Serial.println(__TIME__);
 
+    //------------------------------------------------------------------------------
+    // Auto brightness
+    //------------------------------------------------------------------------------
+
+#if !(AUTOBRIGHT_USE_BH1750) && !(AUTOBRIGHT_USE_LDR)
+    // Disable autoBright-Option if no sensor option is available
+    G.autoBrightEnabled = 9;
+#else
+    if (G.autoBrightEnabled >= 9) {
+        G.autoBrightEnabled = 0;
+    }
+#endif
+
+#if AUTOBRIGHT_USE_BH1750
+    // Initialize ambient light sensor BH1750 on I2C bus
+    if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
+        Serial.println("BH1750 initialized");
+        bh1750Initialized = true;
+    } else {
+        Serial.println("BH1750 initialisation error, using LDR if available");
+        bh1750Initialized = false;
+    }
+#endif
+
     Serial.println("--------------------------------------");
     Serial.println("Ende Setup");
     Serial.println("--------------------------------------");
@@ -420,6 +469,13 @@ void setup() {
     powerCycleCount = 0;
     EEPROM.write(powerCycleCountAddr, powerCycleCount);
     EEPROM.commit();
+
+    //-------------------------------------
+    // Frame Init
+    //-------------------------------------
+    if (usedUhrType->numPixelsFrameMatrix() != 0) {
+        secondsFrame->initFrame();
+    }
 
     //-------------------------------------
     // Transition Init
@@ -437,6 +493,10 @@ void setup() {
 //------------------------------------------------------------------------------
 
 void loop() {
+
+    //------------------------------------------------
+    // Time
+    //------------------------------------------------
     time_t utc = time(nullptr);
     struct tm tm;
     localtime_r(&utc, &tm);
@@ -446,14 +506,18 @@ void loop() {
         _hour = tm.tm_hour;
     }
 
+    //------------------------------------------------
+    // Network
+    //------------------------------------------------
     network.loop();
-
 #ifdef ESP8266
     MDNS.update();
 #endif
-
     httpServer.handleClient();
 
+    //------------------------------------------------
+    // Websocket
+    //------------------------------------------------
     webSocket.loop();
 
     //------------------------------------------------
@@ -463,14 +527,21 @@ void loop() {
         mqtt.loop();
     }
 
+    //------------------------------------------------
+    // Frame
+    //------------------------------------------------
+    secondsFrame->loop();
+
+    //------------------------------------------------
+    // Transition
+    //------------------------------------------------
     transition->loop(tm); // must be called periodically
 
     // make the time run faster in the demo mode of the transition
-    transition->demoMode(_minute, _second);
+    transition->demoMode(_hour, _minute, _second);
 
-    if (usedUhrType->numPixelsFrameMatrix() != 0) {
-        secondsFrame->loop();
-    }
-
+    //------------------------------------------------
+    // Clockwork
+    //------------------------------------------------
     clockWork.loop(tm);
 }

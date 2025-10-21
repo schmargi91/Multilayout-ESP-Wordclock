@@ -4,7 +4,7 @@
  */
 
 //--------------------------------------------------------------------------
-// PIN Configuration
+// PIN Configuration for ESP32 (ESP8266 currently unsupported)
 //--------------------------------------------------------------------------
 #define LED_PIN 3        // Use direct pin number
 #define SDA_PIN_ESP32 21 // Use direct pin number
@@ -54,6 +54,9 @@
 // Same Layout as Ger11x11, but with additional LED's to illuminate the frame
 // from the side
 //
+// #define DEFAULT_LAYOUT Ger13x13
+// 13 rows, 13 LEDs per row
+//
 // #define DEFAULT_LAYOUT Ger22x11Weather
 // 22 rows, each 11 LED's per row, with weather forecast on overall 242 LED's
 // based on design of Github user @Eisbaeeer
@@ -91,6 +94,9 @@
 //
 // #define DEFAULT_LAYOUT Eng08x08
 // 8 rows, 8 LED's per row with modified layout for the English language
+//
+// #define DEFAULT_LAYOUT Eng11x12
+// 11 rows, 12 LED's per row with modified layout for the English language
 
 /**********************/
 /*       Italian      */
@@ -173,14 +179,20 @@
  * with DEFAULT_LEDTYPE. If you have an RGBW LED strip, you can also use
  * WHITE_LEDTYPE to specify the type of white LED used (WarmWhite (3000K),
  * NeutralWhite (4300K) or ColdWhite (6500K)), in the case of RGB just leave it
- * at NeutralWhite.
+ * at NeutralWhite. With DEFAULT_HUE it is possible to define the hue value
+ * of the default color scheme. Use https://colorizer.org to get a hue value
+ * of your choice. DEFAULT_BRIGHTNESS defines the default brightness (percent)
+ * of the LEDs, if no other value is defined yet.
  *
  * Valid values for DEFAULT_LEDTYPE [Brg, Grb, Rgb, Rbg, Gbr, Grbw]
- *
  * Valid values for WHITE_LEDTYPE [WarmWhite, NeutralWhite, ColdWhite]
+ * Valid values for DEFAULT_HUE [integer 0-255]
+ * Valid values for DEFAULT_BRIGHTNESS [one of these: 0, 20, 40, 60, 80, 100]
  */
 #define DEFAULT_LEDTYPE Brg
 #define WHITE_LEDTYPE WhiteType::NeutralWhite
+#define DEFAULT_HUE 120
+#define DEFAULT_BRIGHTNESS 100
 
 //--------------------------------------------------------------------------
 // Define Build Type
@@ -203,6 +215,46 @@
  * [BuildTypeDef::Normal, BuildTypeDef::DoubleResM1]
  */
 #define DEFAULT_BUILDTYPE BuildTypeDef::Normal
+
+//--------------------------------------------------------------------------
+// Specify settings for automatic brightness control
+//--------------------------------------------------------------------------
+/*
+ * The wordclock offers the option to automatically adjust the LED
+ * brightness to the ambient light. Either an LDR or a BH1750 module is
+ * used for this purpose. If both measurement methods are activated and the
+ * corresponding hardware is available and functional, the BH1750 is the
+ * preferred choice.
+ *
+ * By setting AUTOBRIGHT_USE_LDR or AUTOBRIGHT_USE_BH1750 to false, the
+ * respective variant will be disabled and the program code on the
+ * microcontroller can thus be reduced. If both modes are deactivated,
+ * the option for automatic brightness control in the web interface is no
+ * longer available.
+ *
+ * For the LDR variant, a voltage divider with an LDR (R1) and a resistor R2
+ * is used. As LDR a type 5528 and as R2 a 10k resistor is recommended. In
+ * case of a different configuration, it is necessary to adjust these
+ * values accordingly:
+ * AUTOBRIGHT_LDR_RESBRIGHT resistance of the LDR in bright environment
+ *   (10 lux) in KΩ
+ * AUTOBRIGHT_LDR_RESDARK resistance of the LDR in a dark environment
+ *   (0 lux) in KΩ
+ * AUTOBRIGHT_LDR_RESDIVIDER resistance of the divider resistor (R2) in KΩ
+ *
+ * Valid values:
+ * AUTOBRIGHT_USE_BH1750 [true, false]
+ * AUTOBRIGHT_USE_LDR [true, false]
+ * AUTOBRIGHT_LDR_RESBRIGHT [number]
+ * AUTOBRIGHT_LDR_RESDARK [number]
+ * AUTOBRIGHT_LDR_RESDIVIDER [number]
+ */
+#define AUTOBRIGHT_USE_BH1750 true
+#define AUTOBRIGHT_USE_LDR true
+
+#define AUTOBRIGHT_LDR_RESBRIGHT 15
+#define AUTOBRIGHT_LDR_RESDARK 1000
+#define AUTOBRIGHT_LDR_RESDIVIDER 10
 
 //--------------------------------------------------------------------------
 // Define External Realtime Clock
@@ -229,11 +281,12 @@
 // Toggle Serial DEBUG Output
 //--------------------------------------------------------------------------
 /*
- * To delete or initialize the EEPROM, enter another serial number here.
+ * Enable or disable debug messages.
  *
  * Valid values [true, false]
  */
 #define GENERAL_VERBOSE true
+#define WIFI_VERBOSE false
 #define WEATHER_VERBOSE false
 
 //--------------------------------------------------------------------------
@@ -252,6 +305,25 @@
 #define MANUAL_WIFI_SETTINGS false
 #define WIFI_SSID "WIFISSID"
 #define WIFI_PASSWORD "Password"
+
+//--------------------------------------------------------------------------
+// Captive portal settings
+//--------------------------------------------------------------------------
+/*
+ * The captive portal is used to enter the WiFi credentials when
+ * MANUAL_WIFI_SETTINGS is set to false. CP_SSID is used to set a custom
+ * SSID for the captive portal. CP_PROTECTED allows you to enable password
+ * protection for the captive portal. In this case, remember to change
+ * CP_PASSWORD to a secure password.
+ *
+ * Valid values CP_PROTECTED [true, false]
+ * Valid values CP_SSID [Alphanumeric Letters]
+ * Valid values CP_PASSWORD [Alphanumeric Letters]
+ *
+ */
+#define CP_PROTECTED false
+#define CP_SSID "Connect_to_Wordclock"
+#define CP_PASSWORD "CHANGE_THIS_PASSWORD"
 
 //--------------------------------------------------------------------------
 // Settings for Boot sequence
@@ -283,7 +355,13 @@
  * Valid values REVERSE_MINUTE_DIR [true, false]
  * Valid values MIRROR_FRONT_VERTICAL [true, false]
  * Valid values MIRROR_FRONT_HORIZONTAL [true, false]
+ * Valid values EXTRA_LED_PER_ROW [true, false]
+ * Valid values FLIP_HORIZONTAL_VERTICAL [true, false]
+ * Valid values MEANDER_ROWS [true, false]
  */
 #define REVERSE_MINUTE_DIR false
 #define MIRROR_FRONT_VERTICAL false
 #define MIRROR_FRONT_HORIZONTAL false
+#define EXTRA_LED_PER_ROW false
+#define FLIP_HORIZONTAL_VERTICAL false
+#define MEANDER_ROWS true
